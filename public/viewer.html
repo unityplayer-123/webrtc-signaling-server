@@ -13,7 +13,7 @@
 <video id="remoteVideo" autoplay playsinline></video>
 
 <script>
-const wsUrl = `ws://${window.location.host}`;
+const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com";
 console.log("Connecting to signaling server:", wsUrl);
 
 const ws = new WebSocket(wsUrl);
