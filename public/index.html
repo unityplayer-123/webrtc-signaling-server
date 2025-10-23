@@ -1,19 +1,5 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Unity WebRTC Viewer</title>
-<style>
-  body { background: #111; color: #fff; text-align: center; }
-  video { width: 90%; max-width: 800px; margin-top: 30px; border-radius: 10px; }
-</style>
-</head>
-<body>
-<h2>Unity WebRTC Viewer</h2>
-<video id="remoteVideo" autoplay playsinline></video>
-
 <script>
-const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com";
+const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com"; // ← 修正ポイント
 console.log("Connecting to signaling server:", wsUrl);
 
 const ws = new WebSocket(wsUrl);
@@ -35,6 +21,7 @@ const pc = new RTCPeerConnection({
 const video = document.getElementById("remoteVideo");
 
 pc.ontrack = e => {
+  console.log("🎥 Track received");
   video.srcObject = e.streams[0];
 };
 
@@ -44,9 +31,10 @@ ws.onclose = () => console.log("🔌 WebSocket closed");
 
 ws.onmessage = async event => {
   const msg = JSON.parse(event.data);
+  console.log("📩 Message received:", msg.type);
 
   if (msg.type === "offer") {
-    console.log("Received offer");
+    console.log("🎬 Received offer from Unity");
     await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -67,5 +55,3 @@ pc.onicecandidate = e => {
   }
 };
 </script>
-</body>
-</html>
