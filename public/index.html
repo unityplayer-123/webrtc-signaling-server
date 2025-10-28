@@ -1,57 +1,114 @@
-<script>
-const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com"; // ← 修正ポイント
-console.log("Connecting to signaling server:", wsUrl);
-
-const ws = new WebSocket(wsUrl);
-
-const pc = new RTCPeerConnection({
-  iceServers: [
-    {
-      urls: [
-        "stun:mocopiwebrtc.metered.live:80",
-        "turn:mocopiwebrtc.metered.live:80?transport=udp",
-        "turn:mocopiwebrtc.metered.live:443?transport=tcp"
-      ],
-      username: "openrelayproject",
-      credential: "openrelayproject"
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Unity WebRTC Viewer</title>
+  <style>
+    body {
+      background-color: #111;
+      color: #fff;
+      text-align: center;
+      margin: 0;
+      font-family: sans-serif;
     }
-  ]
-});
+    h1 {
+      margin: 20px 0;
+      color: #0ff;
+    }
+    video {
+      width: 90%;
+      max-width: 800px;
+      border: 3px solid #0ff;
+      border-radius: 12px;
+      background-color: #000;
+    }
+    #status {
+      margin-top: 10px;
+      color: #0f0;
+      font-size: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎥 Unity WebRTC Viewer</h1>
+  <video id="remoteVideo" autoplay playsinline></video>
+  <div id="status">Connecting...</div>
 
-const video = document.getElementById("remoteVideo");
+  <script>
+    // === WebSocket Signaling Server ===
+    const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com"; // Render.com のシグナリングサーバー
+    console.log("Connecting to signaling server:", wsUrl);
+    const ws = new WebSocket(wsUrl);
 
-pc.ontrack = e => {
-  console.log("🎥 Track received");
-  video.srcObject = e.streams[0];
-};
+    // === TURN/STUN 設定（OpenRelay / mocopiwebrtc 用） ===
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.relay.metered.ca:80" },
+        {
+          urls: [
+            "turn:standard.relay.metered.ca:80",
+            "turn:standard.relay.metered.ca:80?transport=tcp",
+            "turn:standard.relay.metered.ca:443",
+            "turns:standard.relay.metered.ca:443?transport=tcp"
+          ],
+          username: "122d34ed058124a8f4651057",
+          credential: "T/tLmU7aLcvuABaW"
+        }
+      ]
+    });
 
-ws.onopen = () => console.log("✅ WebSocket connected");
-ws.onerror = err => console.error("❌ WebSocket error", err);
-ws.onclose = () => console.log("🔌 WebSocket closed");
+    const video = document.getElementById("remoteVideo");
+    const status = document.getElementById("status");
 
-ws.onmessage = async event => {
-  const msg = JSON.parse(event.data);
-  console.log("📩 Message received:", msg.type);
+    pc.ontrack = e => {
+      console.log("🎥 Track received");
+      video.srcObject = e.streams[0];
+      status.textContent = "✅ Stream received!";
+    };
 
-  if (msg.type === "offer") {
-    console.log("🎬 Received offer from Unity");
-    await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
-  } else if (msg.type === "candidate") {
-    await pc.addIceCandidate(msg);
-  }
-};
+    ws.onopen = () => {
+      console.log("✅ WebSocket connected");
+      status.textContent = "Connected to signaling server.";
+    };
+    ws.onerror = err => {
+      console.error("❌ WebSocket error", err);
+      status.textContent = "WebSocket error.";
+    };
+    ws.onclose = () => {
+      console.log("🔌 WebSocket closed");
+      status.textContent = "Disconnected.";
+    };
 
-pc.onicecandidate = e => {
-  if (e.candidate) {
-    ws.send(JSON.stringify({
-      type: "candidate",
-      candidate: e.candidate.candidate,
-      sdpMid: e.candidate.sdpMid,
-      sdpMLineIndex: e.candidate.sdpMLineIndex
-    }));
-  }
-};
-</script>
+    // === メッセージ受信処理 ===
+    ws.onmessage = async event => {
+      const msg = JSON.parse(event.data);
+      console.log("📩 Message received:", msg.type);
+
+      if (msg.type === "offer") {
+        console.log("🎬 Received offer from Unity");
+        status.textContent = "Received offer, creating answer...";
+        await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
+        status.textContent = "Answer sent!";
+      } else if (msg.type === "candidate") {
+        await pc.addIceCandidate(msg);
+        console.log("🧊 Added ICE candidate");
+      }
+    };
+
+    // === ICE Candidate送信 ===
+    pc.onicecandidate = e => {
+      if (e.candidate) {
+        ws.send(JSON.stringify({
+          type: "candidate",
+          candidate: e.candidate.candidate,
+          sdpMid: e.candidate.sdpMid,
+          sdpMLineIndex: e.candidate.sdpMLineIndex
+        }));
+      }
+    };
+  </script>
+</body>
+</html>
