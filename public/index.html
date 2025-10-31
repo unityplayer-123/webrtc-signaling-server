@@ -35,12 +35,10 @@
   <div id="status">Connecting...</div>
 
   <script>
-    // === WebSocket Signaling Server ===
-    const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com"; // Render.com のシグナリングサーバー
+    const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com";
     console.log("Connecting to signaling server:", wsUrl);
     const ws = new WebSocket(wsUrl);
 
-    // === TURN/STUN 設定（OpenRelay / mocopiwebrtc 用） ===
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.relay.metered.ca:80" },
@@ -69,7 +67,12 @@
     ws.onopen = () => {
       console.log("✅ WebSocket connected");
       status.textContent = "Connected to signaling server.";
+
+      // 🔹 ロールをサーバーに送信
+      ws.send(JSON.stringify({ role: "browser" }));
+      console.log("📡 Sent role: browser");
     };
+
     ws.onerror = err => {
       console.error("❌ WebSocket error", err);
       status.textContent = "WebSocket error.";
@@ -82,7 +85,13 @@
     // === メッセージ受信処理 ===
     ws.onmessage = async event => {
       const msg = JSON.parse(event.data);
-      console.log("📩 Message received:", msg.type);
+      console.log("📩 Message received:", msg.type || msg.role);
+
+      // 🔹 role メッセージを無視
+      if (msg.role) {
+        console.log(`ℹ️ Role message received: ${msg.role}`);
+        return;
+      }
 
       if (msg.type === "offer") {
         console.log("🎬 Received offer from Unity");
@@ -98,7 +107,6 @@
       }
     };
 
-    // === ICE Candidate送信 ===
     pc.onicecandidate = e => {
       if (e.candidate) {
         ws.send(JSON.stringify({
