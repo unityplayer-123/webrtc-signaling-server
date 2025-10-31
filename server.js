@@ -13,45 +13,59 @@ let browserClient = null;
 let lastOffer = null;
 
 wss.on('connection', ws => {
-  console.log('✅ Client connected');
+  console.log('✅ New WebSocket client connected');
 
   ws.on('message', message => {
-    const msg = JSON.parse(message);
+    try {
+      const msg = JSON.parse(message);
 
-    if (msg.type === 'offer') {
-      console.log('🎥 Offer from Unity');
-      unityClient = ws;
-      lastOffer = message;
+      // --- クライアント識別メッセージ ---
+      if (msg.role === 'unity') {
+        unityClient = ws;
+        console.log('🎮 Unity client registered');
+        return;
+      } else if (msg.role === 'browser') {
+        browserClient = ws;
+        console.log('🖥️ Browser client registered');
+        // キャッシュ済み offer があれば即送信
+        if (lastOffer && ws.readyState === WebSocket.OPEN) {
+          console.log('📤 Sending cached offer to browser');
+          ws.send(lastOffer);
+        }
+        return;
+      }
 
-      if (browserClient && browserClient.readyState === WebSocket.OPEN) {
-        browserClient.send(message);
+      // --- 通常メッセージ ---
+      if (msg.type === 'offer') {
+        console.log('🎥 Offer received from Unity');
+        lastOffer = message;
+        if (browserClient && browserClient.readyState === WebSocket.OPEN) {
+          browserClient.send(message);
+        }
+      } else if (msg.type === 'answer') {
+        console.log('✅ Answer received from Browser');
+        if (unityClient && unityClient.readyState === WebSocket.OPEN) {
+          unityClient.send(message);
+        }
+      } else if (msg.type === 'candidate') {
+        if (ws === unityClient && browserClient) {
+          browserClient.send(message);
+        } else if (ws === browserClient && unityClient) {
+          unityClient.send(message);
+        }
       }
-    } else if (msg.type === 'answer') {
-      console.log('🖥️ Answer from Browser');
-      browserClient = ws;
-      if (unityClient && unityClient.readyState === WebSocket.OPEN) {
-        unityClient.send(message);
-      }
-    } else if (msg.type === 'candidate') {
-      if (ws === unityClient && browserClient) {
-        browserClient.send(message);
-      } else if (ws === browserClient && unityClient) {
-        unityClient.send(message);
-      }
+
+    } catch (err) {
+      console.error('❌ Failed to parse message:', err);
     }
   });
 
-  // 新規ブラウザ接続時にキャッシュした Offer を送信
-  if (!browserClient) {
-    browserClient = ws;
-    if (lastOffer && ws.readyState === WebSocket.OPEN) {
-      console.log('📤 Sending cached offer to new browser');
-      ws.send(lastOffer);
-    }
-  }
-
-  ws.on('close', () => console.log('❌ Client disconnected'));
+  ws.on('close', () => {
+    console.log('❌ Client disconnected');
+    if (ws === unityClient) unityClient = null;
+    if (ws === browserClient) browserClient = null;
+  });
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Signaling server running on port ${PORT}`));
