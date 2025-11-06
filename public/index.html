@@ -35,40 +35,58 @@
   <div id="status">Connecting...</div>
 
   <script>
+    // --- 🔹 Signaling server URL ---
     const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com";
     console.log("Connecting to signaling server:", wsUrl);
     const ws = new WebSocket(wsUrl);
 
+    // --- 🔹 WebRTC (TURN/STUN) 設定 ---
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.relay.metered.ca:80" },
         {
-          urls: [
-            "turn:standard.relay.metered.ca:80",
-            "turn:standard.relay.metered.ca:80?transport=tcp",
-            "turn:standard.relay.metered.ca:443",
-            "turns:standard.relay.metered.ca:443?transport=tcp"
-          ],
+          urls: "turn:standard.relay.metered.ca:80",
           username: "122d34ed058124a8f4651057",
-          credential: "T/tLmU7aLcvuABaW"
-        }
-      ]
+          credential: "T/tLmU7aLcvuABaW",
+        },
+        {
+          urls: "turn:standard.relay.metered.ca:80?transport=tcp",
+          username: "122d34ed058124a8f4651057",
+          credential: "T/tLmU7aLcvuABaW",
+        },
+        {
+          urls: "turn:standard.relay.metered.ca:443",
+          username: "122d34ed058124a8f4651057",
+          credential: "T/tLmU7aLcvuABaW",
+        },
+        {
+          urls: "turns:standard.relay.metered.ca:443?transport=tcp",
+          username: "122d34ed058124a8f4651057",
+          credential: "T/tLmU7aLcvuABaW",
+        },
+      ],
     });
 
     const video = document.getElementById("remoteVideo");
     const status = document.getElementById("status");
 
+    // --- 🔹 リモート映像の受信処理 ---
     pc.ontrack = e => {
-      console.log("🎥 Track received");
+      console.log("🎥 Track received from Unity");
       video.srcObject = e.streams[0];
       status.textContent = "✅ Stream received!";
     };
 
+    // --- 🔹 接続状態のモニタリング ---
+    pc.oniceconnectionstatechange = () => {
+      console.log("🔄 ICE connection state:", pc.iceConnectionState);
+      status.textContent = `ICE state: ${pc.iceConnectionState}`;
+    };
+
+    // --- 🔹 Signalingサーバ接続時 ---
     ws.onopen = () => {
       console.log("✅ WebSocket connected");
       status.textContent = "Connected to signaling server.";
-
-      // 🔹 ロールをサーバーに送信
       ws.send(JSON.stringify({ role: "browser" }));
       console.log("📡 Sent role: browser");
     };
@@ -77,44 +95,60 @@
       console.error("❌ WebSocket error", err);
       status.textContent = "WebSocket error.";
     };
+
     ws.onclose = () => {
       console.log("🔌 WebSocket closed");
       status.textContent = "Disconnected.";
     };
 
-    // === メッセージ受信処理 ===
+    // === 🔹 メッセージ受信処理 ===
     ws.onmessage = async event => {
-      const msg = JSON.parse(event.data);
-      console.log("📩 Message received:", msg.type || msg.role);
-
-      // 🔹 role メッセージを無視
-      if (msg.role) {
-        console.log(`ℹ️ Role message received: ${msg.role}`);
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (err) {
+        console.error("❌ JSON parse error:", event.data);
         return;
       }
+
+      console.log("📩 Message received:", msg.type || msg.role);
+
+      // role メッセージは無視
+      if (msg.role) return;
 
       if (msg.type === "offer") {
         console.log("🎬 Received offer from Unity");
         status.textContent = "Received offer, creating answer...";
+
         await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+
         ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
+        console.log("📤 Sent answer to Unity");
         status.textContent = "Answer sent!";
-      } else if (msg.type === "candidate") {
-        await pc.addIceCandidate(msg);
-        console.log("🧊 Added ICE candidate");
+      } 
+      else if (msg.type === "candidate") {
+        try {
+          await pc.addIceCandidate(msg);
+          console.log("🧊 Added ICE candidate");
+        } catch (err) {
+          console.error("⚠️ Failed to add ICE candidate:", err);
+        }
       }
     };
 
+    // --- 🔹 ICE candidate 生成時 ---
     pc.onicecandidate = e => {
       if (e.candidate) {
         ws.send(JSON.stringify({
           type: "candidate",
           candidate: e.candidate.candidate,
           sdpMid: e.candidate.sdpMid,
-          sdpMLineIndex: e.candidate.sdpMLineIndex
+          sdpMLineIndex: e.candidate.sdpMLineIndex,
         }));
+        console.log("📡 Sent ICE candidate");
       }
     };
   </script>
