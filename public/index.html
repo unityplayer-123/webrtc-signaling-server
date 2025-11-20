@@ -68,35 +68,31 @@
 
     let receivedStream = null;
 
-    // -----------------------------
-    // Track受信時に video に割り当て
-    // -----------------------------
+    // ----------------------------------------------------
+    // ✔ Unity の VideoTrack は "streams" に入らない場合がある
+    //    → MediaStream を自作して addTrack する
+    // ----------------------------------------------------
     pc.ontrack = e => {
-      console.log("🎥 Track received from Unity:", e.streams);
-      if (e.streams.length > 0) {
-        receivedStream = e.streams[0];
+      console.log("🎥 Track received:", e);
 
-        // VideoTrack が存在するか確認
-        if (receivedStream.getVideoTracks().length > 0) {
-          video.srcObject = receivedStream;
-          status.textContent = "✅ Stream received! クリックで再生";
-        } else {
-          console.warn("No video track in received stream");
-        }
+      const track = e.track; // VideoTrack or AudioTrack
+
+      if (track.kind === "video") {
+        console.log("🎥 VideoTrack received:", track);
+
+        receivedStream = new MediaStream();
+        receivedStream.addTrack(track);
+
+        video.srcObject = receivedStream;
+        status.textContent = "✅ Video track received! クリックで再生";
       }
     };
 
-    // -----------------------------
-    // ICE状態監視
-    // -----------------------------
     pc.oniceconnectionstatechange = () => {
       console.log("🔄 ICE state:", pc.iceConnectionState);
       status.textContent = `ICE state: ${pc.iceConnectionState}`;
     };
 
-    // -----------------------------
-    // WebSocket
-    // -----------------------------
     ws.onopen = () => {
       console.log("✅ WebSocket connected");
       ws.send(JSON.stringify({ role: "browser" }));
@@ -131,9 +127,6 @@
       }
     };
 
-    // -----------------------------
-    // 再生ボタンクリックで video.play()
-    // -----------------------------
     playButton.addEventListener("click", () => {
       if (receivedStream) {
         video.play().then(() => {
