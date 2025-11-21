@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <title>Unity WebRTC Viewer</title>
+  <meta charset="UTF-8" />
+  <title>Unity WebRTC Viewer (Optimized)</title>
   <style>
     body {
       background-color: #111;
@@ -11,7 +11,10 @@
       margin: 0;
       font-family: sans-serif;
     }
-    h1 { margin: 20px 0; color: #0ff; }
+    h1 {
+      margin: 20px 0;
+      color: #0ff;
+    }
     video {
       width: 90%;
       max-width: 800px;
@@ -37,7 +40,7 @@
   </style>
 </head>
 <body>
-  <h1>🎥 Unity WebRTC Viewer</h1>
+  <h1>🎥 Unity WebRTC Viewer (Optimized)</h1>
 
   <video id="remoteVideo" playsinline muted></video>
   <div id="status">Connecting...</div>
@@ -69,23 +72,21 @@
     let receivedStream = null;
 
     // ----------------------------------------------------
-    // ✔ Unity の VideoTrack は "streams" に入らない場合がある
-    //    → MediaStream を自作して addTrack する
+    // Track handler
     // ----------------------------------------------------
-    pc.ontrack = e => {
-      console.log("🎥 Track received:", e);
+    pc.ontrack = (event) => {
+      console.log("🎥 Track received:", event);
 
-      const track = e.track; // VideoTrack or AudioTrack
+      const track = event.track;
+      if (track.kind !== "video") return;
 
-      if (track.kind === "video") {
-        console.log("🎥 VideoTrack received:", track);
+      console.log("🎥 VideoTrack received:", track);
 
-        receivedStream = new MediaStream();
-        receivedStream.addTrack(track);
+      receivedStream = new MediaStream();
+      receivedStream.addTrack(track);
 
-        video.srcObject = receivedStream;
-        status.textContent = "✅ Video track received! クリックで再生";
-      }
+      video.srcObject = receivedStream;
+      status.textContent = "✅ Video track received! クリックで再生";
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -93,13 +94,16 @@
       status.textContent = `ICE state: ${pc.iceConnectionState}`;
     };
 
+    // ----------------------------------------------------
+    // WebSocket signaling
+    // ----------------------------------------------------
     ws.onopen = () => {
       console.log("✅ WebSocket connected");
       ws.send(JSON.stringify({ role: "browser" }));
     };
 
-    ws.onmessage = async event => {
-      let msg = JSON.parse(event.data);
+    ws.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
       if (msg.role) return;
 
       if (msg.type === "offer") {
@@ -116,29 +120,39 @@
       }
     };
 
-    pc.onicecandidate = e => {
+    pc.onicecandidate = (e) => {
       if (e.candidate) {
-        ws.send(JSON.stringify({
-          type: "candidate",
-          candidate: e.candidate.candidate,
-          sdpMid: e.candidate.sdpMid,
-          sdpMLineIndex: e.candidate.sdpMLineIndex,
-        }));
+        ws.send(
+          JSON.stringify({
+            type: "candidate",
+            candidate: e.candidate.candidate,
+            sdpMid: e.candidate.sdpMid,
+            sdpMLineIndex: e.candidate.sdpMLineIndex,
+          })
+        );
       }
     };
 
+    // ----------------------------------------------------
+    // Manual play button (required by mobile autoplay policies)
+    // ----------------------------------------------------
     playButton.addEventListener("click", () => {
-      if (receivedStream) {
-        video.play().then(() => {
+      if (!receivedStream) {
+        status.textContent = "❌ まだストリームを受信していません";
+        return;
+      }
+
+      video
+        .play()
+        .then(() => {
           status.textContent = "🎬 再生中";
-        }).catch(err => {
+        })
+        .catch((err) => {
           console.warn("video.play() failed:", err);
           status.textContent = "❌ 再生失敗";
         });
-      } else {
-        status.textContent = "❌ まだストリームを受信していません";
-      }
     });
   </script>
 </body>
 </html>
+
