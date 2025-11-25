@@ -42,7 +42,8 @@
 <body>
   <h1>🎥 Unity WebRTC Viewer (Optimized)</h1>
 
-  <video id="remoteVideo" playsinline muted></video>
+  <!-- muted を外す -->
+  <video id="remoteVideo" playsinline></video>
   <div id="status">Connecting...</div>
   <button id="playButton">▶ 再生</button>
 
@@ -82,10 +83,17 @@
 
       console.log("🎥 VideoTrack received:", track);
 
+      // 新しい MediaStream に track を追加
       receivedStream = new MediaStream();
       receivedStream.addTrack(track);
 
+      // video に割り当て
       video.srcObject = receivedStream;
+      video.muted = false; // 念のため false
+      video.play().catch(() => {
+        console.log("Autoplay blocked, wait for user interaction");
+      });
+
       status.textContent = "✅ Video track received! クリックで再生";
     };
 
@@ -113,7 +121,7 @@
         ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
       } else if (msg.type === "candidate" && msg.candidate) {
         await pc.addIceCandidate({
-          candidate: msg.candidate,
+          candidate: msg.candidate.candidate,
           sdpMid: msg.sdpMid,
           sdpMLineIndex: msg.sdpMLineIndex,
         });
@@ -134,7 +142,7 @@
     };
 
     // ----------------------------------------------------
-    // Manual play button (required by mobile autoplay policies)
+    // Manual play button (モバイル向け)
     // ----------------------------------------------------
     playButton.addEventListener("click", () => {
       if (!receivedStream) {
@@ -142,8 +150,7 @@
         return;
       }
 
-      video
-        .play()
+      video.play()
         .then(() => {
           status.textContent = "🎬 再生中";
         })
@@ -155,4 +162,3 @@
   </script>
 </body>
 </html>
-
