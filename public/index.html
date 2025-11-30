@@ -1,154 +1,68 @@
 <!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <title>Unity WebRTC Viewer (Editor)</title>
-  <style>
-    body {
-      background-color: #111;
-      color: #fff;
-      text-align: center;
-      margin: 0;
-      font-family: sans-serif;
-    }
-    h1 {
-      margin: 20px 0;
-      color: #0ff;
-    }
-    video {
-      width: 90%;
-      max-width: 800px;
-      border: 3px solid #0ff;
-      border-radius: 12px;
-      background-color: #000;
-    }
-    #status {
-      margin-top: 10px;
-      color: #0f0;
-      font-size: 1rem;
-    }
-    #playButton {
-      margin-top: 15px;
-      padding: 10px 20px;
-      font-size: 1rem;
-      border-radius: 8px;
-      border: none;
-      background-color: #0ff;
-      color: #111;
-      cursor: pointer;
-    }
-  </style>
-</head>
+<html>
 <body>
-  <h1>🎥 Unity WebRTC Viewer (Editor)</h1>
-
-  <video id="remoteVideo" playsinline></video>
-  <div id="status">Connecting...</div>
-  <button id="playButton">▶ 再生</button>
+  <video id="remoteVideo" autoplay playsinline></video>
 
   <script>
-    const wsUrl = "wss://webrtc-signaling-server-va4t.onrender.com";
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket("wss://webrtc-signaling-server-va4t.onrender.com");
+    let pc = null;
 
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.relay.metered.ca:80" },
-        {
-          urls: [
-            "turn:standard.relay.metered.ca:80",
-            "turn:standard.relay.metered.ca:443",
-            "turns:standard.relay.metered.ca:443?transport=tcp"
-          ],
-          username: "122d34ed058124a8f4651057",
-          credential: "T/tLmU7aLcvuABaW",
-        },
-      ],
-    });
-
-    const video = document.getElementById("remoteVideo");
-    const status = document.getElementById("status");
-    const playButton = document.getElementById("playButton");
-
-    let receivedStream = null;
-
-    // ----------------------------------------------------
-    // Track handler
-    // ----------------------------------------------------
-    pc.ontrack = (event) => {
-      const track = event.track;
-      if (track.kind !== "video") return;
-
-      receivedStream = new MediaStream();
-      receivedStream.addTrack(track);
-
-      video.srcObject = receivedStream;
-
-      // Editorでは自動再生を試みる
-      video.play()
-        .then(() => status.textContent = "🎬 再生中 (Editor)")
-        .catch(() => status.textContent = "❌ 自動再生できません。▶ ボタンをクリック");
-
-      console.log("🎥 VideoTrack received:", track);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log("🔄 ICE state:", pc.iceConnectionState);
-      status.textContent = `ICE state: ${pc.iceConnectionState}`;
-    };
-
-    // ----------------------------------------------------
-    // WebSocket signaling
-    // ----------------------------------------------------
     ws.onopen = () => {
-      console.log("✅ WebSocket connected");
       ws.send(JSON.stringify({ role: "browser" }));
     };
 
-    ws.onmessage = async (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.role) return;
+    ws.onmessage = async (e) => {
+      const msg = JSON.parse(e.data);
 
+      // ====== OFFER 受信 ======
       if (msg.type === "offer") {
-        await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
+        pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" }
+          ]
+        });
+
+        // 映像トラックを取得
+        pc.ontrack = (ev) => {
+          document.getElementById("remoteVideo").srcObject = ev.streams[0];
+        };
+
+        // ICE candidate を Unity に送る
+        pc.onicecandidate = (ev) => {
+          if (ev.candidate) {
+            ws.send(JSON.stringify({
+              type: "candidate",
+              candidate: ev.candidate.candidate,
+              sdpMid: ev.candidate.sdpMid,
+              sdpMLineIndex: ev.candidate.sdpMLineIndex,
+            }));
+          }
+        };
+
+        // オファー処理
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({ type: "offer", sdp: msg.sdp })
+        );
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
-      } else if (msg.type === "candidate" && msg.candidate) {
+
+        // Answer を Unity に送信
+        ws.send(JSON.stringify({
+          type: "answer",
+          sdp: answer.sdp,
+        }));
+      }
+
+      // ====== ICE candidate 受信 ======
+      if (msg.type === "candidate" && pc) {
         await pc.addIceCandidate({
-          candidate: msg.candidate.candidate,
+          candidate: msg.candidate,
           sdpMid: msg.sdpMid,
           sdpMLineIndex: msg.sdpMLineIndex,
         });
       }
     };
-
-    pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        ws.send(JSON.stringify({
-          type: "candidate",
-          candidate: e.candidate.candidate,
-          sdpMid: e.candidate.sdpMid,
-          sdpMLineIndex: e.candidate.sdpMLineIndex,
-        }));
-      }
-    };
-
-    // ----------------------------------------------------
-    // 再生ボタン (Editorでも使える)
-    // ----------------------------------------------------
-    playButton.addEventListener("click", () => {
-      if (!receivedStream) {
-        status.textContent = "❌ まだストリームを受信していません";
-        return;
-      }
-
-      video.play()
-        .then(() => status.textContent = "🎬 再生中")
-        .catch((err) => {
-          console.warn("video.play() failed:", err);
-          status.textContent = "❌ 再生失敗";
-        });
-    });
   </script>
 </body>
 </html>
