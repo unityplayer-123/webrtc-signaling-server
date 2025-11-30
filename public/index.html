@@ -1,68 +1,66 @@
-<!DOCTYPE html>
-<html>
-<body>
-  <video id="remoteVideo" autoplay playsinline></video>
+<script>
+let pc = null;
+let ws = new WebSocket("wss://webrtc-signaling-server-va4t.onrender.com");
 
-  <script>
-    const ws = new WebSocket("wss://webrtc-signaling-server-va4t.onrender.com");
-    let pc = null;
+ws.onmessage = async (event) => {
+    const msg = JSON.parse(event.data);
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ role: "browser" }));
-    };
+    // Unity → Browser: Offer
+    if (msg.type === "offer") {
 
-    ws.onmessage = async (e) => {
-      const msg = JSON.parse(e.data);
-
-      // ====== OFFER 受信 ======
-      if (msg.type === "offer") {
         pc = new RTCPeerConnection({
-          iceServers: [
-            { urls: "stun:stun.l.google.com:19302" }
-          ]
+            iceServers: [
+                { urls: "stun:stun.relay.metered.ca:80" },
+                {
+                    urls: [
+                        "turn:standard.relay.metered.ca:80",
+                        "turn:standard.relay.metered.ca:80?transport=tcp",
+                        "turn:standard.relay.metered.ca:443",
+                        "turns:standard.relay.metered.ca:443?transport=tcp"
+                    ],
+                    username: "122d34ed058124a8f4651057",
+                    credential: "T/tLmU7aLcvuABaW"
+                }
+            ]
         });
 
-        // 映像トラックを取得
-        pc.ontrack = (ev) => {
-          document.getElementById("remoteVideo").srcObject = ev.streams[0];
+        pc.ontrack = (e) => {
+            document.querySelector("#video").srcObject = e.streams[0];
         };
 
-        // ICE candidate を Unity に送る
-        pc.onicecandidate = (ev) => {
-          if (ev.candidate) {
-            ws.send(JSON.stringify({
-              type: "candidate",
-              candidate: ev.candidate.candidate,
-              sdpMid: ev.candidate.sdpMid,
-              sdpMLineIndex: ev.candidate.sdpMLineIndex,
-            }));
-          }
+        pc.onicecandidate = (ice) => {
+            if (ice.candidate) {
+                ws.send(JSON.stringify({
+                    type: "candidate",
+                    candidate: ice.candidate.candidate,
+                    sdpMid: ice.candidate.sdpMid,
+                    sdpMLineIndex: ice.candidate.sdpMLineIndex
+                }));
+            }
         };
 
-        // オファー処理
-        await pc.setRemoteDescription(
-          new RTCSessionDescription({ type: "offer", sdp: msg.sdp })
-        );
+        await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
-        // Answer を Unity に送信
         ws.send(JSON.stringify({
-          type: "answer",
-          sdp: answer.sdp,
+            type: "answer",
+            sdp: answer.sdp
         }));
-      }
+    }
 
-      // ====== ICE candidate 受信 ======
-      if (msg.type === "candidate" && pc) {
-        await pc.addIceCandidate({
-          candidate: msg.candidate,
-          sdpMid: msg.sdpMid,
-          sdpMLineIndex: msg.sdpMLineIndex,
-        });
-      }
-    };
-  </script>
-</body>
-</html>
+    // Unity → Browser: Ice Candidate
+    if (msg.type === "candidate") {
+        try {
+            await pc.addIceCandidate({
+                candidate: msg.candidate,
+                sdpMid: msg.sdpMid,
+                sdpMLineIndex: msg.sdpMLineIndex
+            });
+        } catch (e) { }
+    }
+};
+</script>
+
+<video id="video" autoplay playsinline controls></video>
