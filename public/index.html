@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>WebRTC Viewer</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    video { width: 100%; max-width: 640px; border: 1px solid #333; margin-bottom: 10px; background: #000; }
+    button { margin-right: 10px; margin-bottom: 10px; }
+    textarea { width: 100%; max-width: 640px; }
+    .hint { color: #555; font-size: 12px; max-width: 640px; }
+  </style>
+</head>
+<body>
+  <h2>WebRTC Viewer (Unity → Browser)</h2>
+
+  <video id="remoteVideo" autoplay playsinline muted controls></video>
+
+  <div>
+    <button onclick="connect()">Connect</button>
+    <button onclick="hangUp()">Hang Up</button>
+  </div>
+
+  <p class="hint">
+    ※ Console に [STATS] と [VIDEO] が 1秒ごとに出ます。
+  </p>
+
+  <p>SDP (for debug):<br>
+    <textarea id="sdpDebug" rows="10" readonly></textarea>
+  </p>
+
+<script>
+let pc = null;
+let ws = null;
+
+const remoteVideo = document.getElementById('remoteVideo');
+const sdpDebug = document.getElementById('sdpDebug');
+
+const signalingUrl = "wss://webrtc-signaling-server-va4t.onrender.com";
+
+let remoteDescSet = false;
+let pendingCandidates = [];
+
+let statsTimer = null;
+let dumpedOnce = false;
+
+remoteVideo.addEventListener("loadedmetadata", () => {
+  remoteVideo.play().catch(err => console.warn("video.play() failed:", err));
+});
+
+function connect() {
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+
+  ws = new WebSocket(signalingUrl);
+  window.__ws = ws;
+
+  ws.onopen = () => {
+    console.log("WebSocket connected");
+    ws.send(JSON.stringify({ role: "browser" }));
+  };
+
+  ws.onmessage = async (event) => {
+    const msg = JSON.parse(event.data);
+    console.log("Received message:", msg);
+
+    switch (msg.type) {
+      case "offer":
+        await handleOffer(msg);
+        break;
+
+      case "candidate":
+        if (!msg.candidate) return;
+        if (!pc || !remoteDescSet) {
+          pendingCandidates.push(msg);
+          console.log("Candidate queued (pc/remote not ready)");
+          return;
+        }
+        await addCandidateSafe(msg);
+        break;
+
+      default:
+        console.warn("Unknown message type:", msg.type);
+    }
+  };
+}
+
+async function handleOffer(offer) {
+  console.log("Handling Offer from Unity...");
+
+  stopStats();
+  dumpedOnce = false;
+  remoteDescSet = false;
+  pendingCandidates = [];
+
+  if (pc) { try { pc.close(); } catch {} pc = null; }
+
+  pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.relay.metered.ca:80" },
+      {
+        urls: [
+          "turn:standard.relay.metered.ca:80",
+          "turn:standard.relay.metered.ca:80?transport=tcp",
+          "turn:standard.relay.metered.ca:443",
+          "turns:standard.relay.metered.ca:443?transport=tcp"
+        ],
+        username: "122d34ed058124a8f4651057",
+        credential: "T/tLmU7aLcvuABaW"
+      }
+    ]
+  });
+
+  pc.__debugId = crypto.randomUUID();
+  window.__pc = pc;
+  console.log("[PC CREATED]", pc.__debugId);
+
+  pc.oniceconnectionstatechange = () => console.log("ICE:", pc.iceConnectionState);
+  pc.onconnectionstatechange = () => console.log("CONN:", pc.connectionState);
+  pc.onsignalingstatechange = () => console.log("SIG:", pc.signalingState);
+
+  pc.ontrack = (event) => {
+    console.log("[ontrack pcId]", pc.__debugId, "trackMuted=", event.track.muted, "readyState=", event.track.readyState);
+
+    const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+    remoteVideo.srcObject = stream;
+
+    remoteVideo.muted = true;
+    remoteVideo.playsInline = true;
+    remoteVideo.play().catch(err => console.warn("video.play() failed:", err));
+  };
+
+  pc.onicecandidate = (ice) => {
+    if (ice.candidate && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "candidate",
+        candidate: ice.candidate.candidate,
+        sdpMid: ice.candidate.sdpMid,
+        sdpMLineIndex: ice.candidate.sdpMLineIndex
+      }));
+    }
+  };
+
+  try { pc.addTransceiver("video", { direction: "recvonly" }); } catch {}
+
+  await pc.setRemoteDescription({ type: "offer", sdp: offer.sdp });
+  remoteDescSet = true;
+
+  for (const c of pendingCandidates) await addCandidateSafe(c);
+  pendingCandidates = [];
+
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
+  }
+
+  console.log("Answer sent to Unity");
+  sdpDebug.value = answer.sdp;
+
+  startStats();
+}
+
+async function addCandidateSafe(msg) {
+  try {
+    await pc.addIceCandidate({
+      candidate: msg.candidate,
+      sdpMid: msg.sdpMid,
+      sdpMLineIndex: msg.sdpMLineIndex
+    });
+    console.log("ICE Candidate added");
+  } catch (e) {
+    console.error("Failed to add ICE candidate:", e, msg);
+  }
+}
+
+function startStats() {
+  if (statsTimer) return;
+  console.log("✅ startStats() started");
+
+  statsTimer = setInterval(async () => {
+    if (!pc) return;
+
+    console.log("[stats pcId]", pc.__debugId);
+
+    try {
+      const stats = await pc.getStats();
+
+      if (!dumpedOnce) {
+        dumpedOnce = true;
+        const types = new Set();
+        stats.forEach(r => types.add(r.type));
+        console.log("[STATS] pc.getStats types:", Array.from(types).sort());
+      }
+
+      // receiver.getStats を必ず併用
+      const recv = pc.getReceivers().find(r => r.track && r.track.kind === "video");
+      if (recv) {
+        const rs = await recv.getStats();
+        let anyInbound = false;
+
+        rs.forEach(r => {
+          if (r.type === "inbound-rtp") {
+            anyInbound = true;
+            console.log("[STATS][inbound-rtp]",
+              "bytesReceived=", r.bytesReceived,
+              "packetsReceived=", r.packetsReceived,
+              "framesDecoded=", r.framesDecoded
+            );
+          }
+        });
+
+        if (!anyInbound) console.log("[STATS] inbound-rtp not found (yet)");
+      } else {
+        console.log("[STATS] receiver(video) not found yet");
+      }
+
+      // candidate-pair
+      stats.forEach(r => {
+        if (r.type === "candidate-pair" && r.state === "succeeded" && r.nominated) {
+          console.log("[STATS][candidate-pair]",
+            "currentRoundTripTime=", r.currentRoundTripTime,
+            "availableOutgoingBitrate=", r.availableOutgoingBitrate
+          );
+        }
+      });
+
+    } catch (e) {
+      console.warn("[STATS] getStats failed:", e);
+    }
+
+    console.log("[VIDEO] size=", remoteVideo.videoWidth, remoteVideo.videoHeight,
+      "readyState=", remoteVideo.readyState, "paused=", remoteVideo.paused);
+  }, 1000);
+}
+
+function stopStats() {
+  if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+}
+
+function hangUp() {
+  stopStats();
+  if (pc) { try { pc.close(); } catch {} pc = null; }
+  if (ws) { try { ws.close(); } catch {} ws = null; }
+  remoteVideo.srcObject = null;
+  remoteDescSet = false;
+  pendingCandidates = [];
+  console.log("Connection closed");
+}
+</script>
+</body>
+</html>
